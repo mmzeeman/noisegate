@@ -378,21 +378,21 @@ two_node_workflow_test() ->
         ?assertEqual(unknown_name, noisegate_keys:check_peer(<<"a@h">>, PubA, keys_opts(KB, AB)))
     end).
 
-%% Runs every command in a fresh VM whose code path has no enoise.
-no_enoise_test_() ->
+%% Runs every command in a fresh VM whose code path has no herrie.
+no_herrie_test_() ->
     {timeout, 60, fun() -> with_dir(fun(B) ->
         Ebin = filename:dirname(code:which(noisegate_guests)),
         {ok, Peer, _Node} = peer:start_link(#{args => ["-pa", Ebin], connection => standard_io}),
         try
-            ?assertEqual({error, nofile}, peer:call(Peer, code, ensure_loaded, [enoise_keypair])),
+            ?assertEqual({error, nofile}, peer:call(Peer, code, ensure_loaded, [herrie_keypair])),
             {_, _, G} = node_dirs(B, "a"),
             Key = b64(new_pub()),
             Cmds = [["init", "--node", "a@h" | G], ["show", "--self", "--node", "a@h" | G],
                     ["add", "b@h", Key | G], ["list" | G], ["show", "b@h" | G],
                     ["check", "b@h", fp(base64:decode(Key)) | G], ["remove", "b@h" | G]],
             [?assertMatch({0, _, _}, peer:call(Peer, noisegate_guests, run, [C, #{}])) || C <- Cmds],
-            ?assertEqual(false, peer:call(Peer, code, is_loaded, [enoise])),
-            ?assertEqual(false, peer:call(Peer, code, is_loaded, [enoise_keypair]))
+            ?assertEqual(false, peer:call(Peer, code, is_loaded, [herrie])),
+            ?assertEqual(false, peer:call(Peer, code, is_loaded, [herrie_keypair]))
         after
             peer:stop(Peer)
         end

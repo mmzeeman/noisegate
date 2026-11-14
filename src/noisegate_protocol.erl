@@ -290,7 +290,7 @@ limits() ->
 -type rx_event() :: {packet, iodata()} | tick.
 
 -record(tx, {
-    cs          :: enoise_cipher_state:state(),
+    cs          :: herrie_cipher_state:state(),
     chunk       :: pos_integer(),
     padding     :: padding(),
     compression :: compression(),
@@ -311,7 +311,7 @@ limits() ->
 }).
 
 -record(rx, {
-    cs                 :: enoise_cipher_state:state(),
+    cs                 :: herrie_cipher_state:state(),
     %% Newest fragment first; before the length is known, buf holds one header byte.
     buf = []           :: [binary()],
     buf_size = 0       :: non_neg_integer(),
@@ -522,7 +522,7 @@ parse_bool(_) ->
 %% `Policy` is a settings map as accepted by `sender_policy/1` (an already
 %% validated policy is accepted too). Raises `badarg` for an invalid policy or a
 %% cipher state without a key.
--spec new_sender(enoise_cipher_state:state(), map()) -> sender().
+-spec new_sender(herrie_cipher_state:state(), map()) -> sender().
 new_sender(CS, Policy) when is_map(Policy) ->
     ok = check_keyed(CS),
     #{chunk_size := Chunk,
@@ -552,7 +552,7 @@ limit(Kind, Limits) ->
 
 %% Creates a receiver around the receive cipher state of a finished handshake.
 %% `Policy` is a settings map as accepted by `receiver_policy/1`.
--spec new_receiver(enoise_cipher_state:state(), map()) -> receiver().
+-spec new_receiver(herrie_cipher_state:state(), map()) -> receiver().
 new_receiver(CS, Policy) when is_map(Policy) ->
     ok = check_keyed(CS),
     #{max_packet := MaxPacket,
@@ -568,7 +568,7 @@ ok_policy({ok, Policy}) -> Policy;
 ok_policy({error, Error}) -> erlang:error({badarg, Error}).
 
 check_keyed(CS) ->
-    case enoise_cipher_state:has_key(CS) of
+    case herrie_cipher_state:has_key(CS) of
         true -> ok;
         false -> erlang:error(badarg)
     end.
@@ -686,12 +686,12 @@ emit(#tx{padding = Padding} = S, Flags0, Payload) ->
             end,
 
     BinCipherLen = <<CipherLen:16>>,
-    {ok, CS1, Cipher} = enoise_cipher_state:encrypt_with_ad_iolist(S#tx.cs, BinCipherLen, [Flags, Body]),
+    {ok, CS1, Cipher} = herrie_cipher_state:encrypt_with_ad_iolist(S#tx.cs, BinCipherLen, [Flags, Body]),
     Frame = [BinCipherLen, Cipher],
 
     case IsRekeyDue of
         true ->
-            {Frame, S#tx{cs = enoise_cipher_state:rekey(CS1),
+            {Frame, S#tx{cs = herrie_cipher_state:rekey(CS1),
                          frames = 0,
                          bytes = 0,
                          t0 = Now}};
@@ -801,7 +801,7 @@ rx_fail(R, Reason) ->
 rx_frame(#rx{max_bytes = Max, since = Since}, Len, _) when Max =/= infinity, Since + Len > Max ->
     {error, rekey_required};
 rx_frame(#rx{cs = CS} = R, Len, Cipher) ->
-    case enoise_cipher_state:decrypt_with_ad(CS, <<Len:16>>, Cipher) of
+    case herrie_cipher_state:decrypt_with_ad(CS, <<Len:16>>, Cipher) of
         {ok, CS1, <<Flags, Rest/binary>>} ->
             rx_flags(R#rx{cs = CS1}, Len, Flags, Rest);
         _ ->
@@ -863,7 +863,7 @@ rx_data(#rx{acc = Acc, acc_size = Size, max_packet = Max} = R, Flags, Chunk, Chu
 
 %
 rx_rekey(R, _Len, Flags, Ev) when Flags band ?F_REKEY =/= 0 ->
-    CS = enoise_cipher_state:rekey(R#rx.cs),
+    CS = herrie_cipher_state:rekey(R#rx.cs),
     {ok, Ev, R#rx{cs = CS, since = 0}};
 rx_rekey(#rx{since = Since} = R, Len, _Flags, Ev) ->
     {ok, Ev, R#rx{since = Since + Len}}.

@@ -1,13 +1,13 @@
-%% enoise API verified against the pinned source:
-%%   enoise:handshake([{noise, ProtocolName}, {prologue, Prologue}, {s, StaticKeypair}], Role)
+%% herrie API verified against the pinned source:
+%%   herrie:handshake([{noise, ProtocolName}, {prologue, Prologue}, {s, StaticKeypair}], Role)
 %%     creates the XX handshake state for the protocol name, prologue, static
 %%     keypair and role.
-%%   enoise:step_handshake(State, {send, Payload}) writes a message and
-%%     enoise:step_handshake(State, {rcvd, Message}) reads one and returns its
+%%   herrie:step_handshake(State, {send, Payload}) writes a message and
+%%     herrie:step_handshake(State, {rcvd, Message}) reads one and returns its
 %%     payload.
-%%   enoise_hs_state:remote_keys(State) returns the remote static keypair;
-%%     enoise_keypair:pubkey/1 extracts its public key.
-%%   enoise_hs_state:finalize(State) returns the two split cipher states.
+%%   herrie_hs_state:remote_keys(State) returns the remote static keypair;
+%%     herrie_keypair:pubkey/1 extracts its public key.
+%%   herrie_hs_state:finalize(State) returns the two split cipher states.
 %%     It assigns initiator tx=CS1, rx=CS2 and responder rx=CS1, tx=CS2.
 %%     The loopback transport test verifies this.
 
@@ -24,8 +24,8 @@
 -export([initiate/4, respond/4]).
 
 -type suite() :: chachapoly_blake2b | aesgcm_sha512 | aesgcm_sha256 | aesgcm_blake2b.
--type result() :: #{send := enoise_cipher_state:state(),
-                    recv := enoise_cipher_state:state(),
+-type result() :: #{send := herrie_cipher_state:state(),
+                    recv := herrie_cipher_state:state(),
                     remote_name := binary(),
                     remote_key := binary(),
                     suite := suite()}.
@@ -89,7 +89,7 @@ initiate_handshake(Socket, TargetName, Keys, Opts, Deadline) ->
                     Prologue = noisegate_protocol:prologue(Header, TargetName),
                     case handshake_state(Suite, Prologue, Keys, initiator) of
                         {ok, State0} ->
-                            case enoise:step_handshake(State0, {send, <<>>}) of
+                            case herrie:step_handshake(State0, {send, <<>>}) of
                                 {ok, send, Msg1, State1} when byte_size(Msg1) =:= 32 ->
                                     Hello = noisegate_protocol:hello(SuiteId, Msg1),
                                     case binary:part(Hello, 0, 8) =:= Header of
@@ -123,7 +123,7 @@ initiate_reply(Socket, TargetName, OwnName, Suite, State1, Opts, Deadline) ->
                 {ok, Msg2Len} ->
                     case read_exact(Socket, Msg2Len, Deadline) of
                         {ok, Msg2} ->
-                            case enoise:step_handshake(State1, {rcvd, Msg2}) of
+                            case herrie:step_handshake(State1, {rcvd, Msg2}) of
                                 {ok, rcvd, Payload, State2} ->
                                     check_responder(Socket, TargetName, OwnName, Suite,
                                                     State2, Payload, Opts);
@@ -160,12 +160,12 @@ check_responder(Socket, TargetName, OwnName, Suite, State2, Payload, Opts) ->
     end.
 
 send_msg3(Socket, OwnName, Suite, RemoteName, RemoteKey, State2) ->
-    case enoise:step_handshake(State2,
+    case herrie:step_handshake(State2,
                                {send, noisegate_protocol:encode_name(OwnName)}) of
         {ok, send, Msg3, State3} ->
             case gen_tcp:send(Socket, noisegate_protocol:msg3_frame(Msg3)) of
                 ok ->
-                    case enoise_hs_state:finalize(State3) of
+                    case herrie_hs_state:finalize(State3) of
                         {ok, Split} ->
                             {ok, result(Split, RemoteName, RemoteKey, Suite)}
                     end;
@@ -220,7 +220,7 @@ respond_msg1(Socket, HelloHeader, OwnName, Suite, Keys, Opts, Deadline) ->
             Prologue = noisegate_protocol:prologue(HelloHeader, OwnName),
             case handshake_state(Suite, Prologue, Keys, responder) of
                 {ok, State0} ->
-                    case enoise:step_handshake(State0, {rcvd, Msg1}) of
+                    case herrie:step_handshake(State0, {rcvd, Msg1}) of
                         {ok, rcvd, <<>>, State1} ->
                             send_msg2(Socket, OwnName, Suite, State1, Opts, Deadline);
                         {ok, rcvd, _UnexpectedPayload, _State1} ->
@@ -236,7 +236,7 @@ respond_msg1(Socket, HelloHeader, OwnName, Suite, Keys, Opts, Deadline) ->
     end.
 
 send_msg2(Socket, OwnName, Suite, State1, Opts, Deadline) ->
-    case enoise:step_handshake(State1,
+    case herrie:step_handshake(State1,
                                {send, noisegate_protocol:encode_name(OwnName)}) of
         {ok, send, Msg2, State2} ->
             case gen_tcp:send(Socket, noisegate_protocol:reply_ok(Msg2)) of
@@ -268,14 +268,14 @@ receive_msg3(Socket, Suite, State2, Opts, Deadline) ->
     end.
 
 process_msg3(Msg3, Suite, State2, Opts) ->
-    case enoise:step_handshake(State2, {rcvd, Msg3}) of
+    case herrie:step_handshake(State2, {rcvd, Msg3}) of
         {ok, rcvd, Payload, State3} ->
             case noisegate_protocol:decode_name(Payload) of
                 {ok, RemoteName} ->
                     RemoteKey = remote_public_key(State3),
                     case noisegate_keys:check_peer(RemoteName, RemoteKey, Opts) of
                         allowed ->
-                            case enoise_hs_state:finalize(State3) of
+                            case herrie_hs_state:finalize(State3) of
                                 {ok, Split} ->
                                     {ok, result(Split, RemoteName, RemoteKey, Suite)}
                             end;
@@ -293,8 +293,8 @@ process_msg3(Msg3, Suite, State2, Opts) ->
 handshake_state(Suite, Prologue, Keys, Role) ->
     try {noisegate_keys:public(Keys), noisegate_keys:secret(Keys)} of
         {<<_:32/binary>> = Public, <<_:32/binary>> = Secret} ->
-            KeyPair = enoise_keypair:new(dh25519, Secret, Public),
-            enoise:handshake([{noise, noisegate_protocol:noise_name(Suite)},
+            KeyPair = herrie_keypair:new(dh25519, Secret, Public),
+            herrie:handshake([{noise, noisegate_protocol:noise_name(Suite)},
                               {prologue, Prologue},
                               {s, KeyPair}],
                              Role);
@@ -305,7 +305,7 @@ handshake_state(Suite, Prologue, Keys, Role) ->
     end.
 
 remote_public_key(State) ->
-    enoise_keypair:pubkey(enoise_hs_state:remote_keys(State)).
+    herrie_keypair:pubkey(herrie_hs_state:remote_keys(State)).
 
 result(#{tx := Send, rx := Recv}, RemoteName, RemoteKey, Suite) ->
     #{send => Send,

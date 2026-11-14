@@ -2,7 +2,7 @@
  [{description, "Erlang distribution over Noise (enoise)"},
   {vsn, "0.1.0"},
   {registered, []},
-  {applications, [kernel, stdlib, enoise]},
+  {applications, [kernel, stdlib, herrie]},
   {env, []},
   {licenses, ["Apache-2.0"]}
  ]}.
