@@ -146,11 +146,11 @@ unpad_iodata_test() ->
                  noisegate_protocol:unpad(8, [<<4:16>>, <<"hello">>, <<1, 0, 0, 0>>])),
     ?assertError(badarg, noisegate_protocol:unpad(8, [<<4:16>>, 256])).
 
-limits_match_enoise_test_() ->
+limits_match_herrie_test_() ->
     [?_test(begin
         Limits = noisegate_protocol:limits(),
         lists:foreach(fun(Name) ->
-            {Msg1, Msg2, Msg3} = enoise_flight_lengths(Suite, Name),
+            {Msg1, Msg2, Msg3} = herrie_flight_lengths(Suite, Name),
             ?assertEqual(32, byte_size(Msg1)),
             ?assertEqual(byte_size(Msg1), element(1, maps:get(msg1_length, Limits))),
             ?assertEqual(byte_size(Msg1), element(2, maps:get(msg1_length, Limits))),
@@ -168,29 +168,29 @@ length_limit(Key, Name, Limits) ->
         255 -> Max
     end.
 
-enoise_flight_lengths(Suite, Name) ->
+herrie_flight_lengths(Suite, Name) ->
     SuiteId = noisegate_protocol:suite_id(Suite),
     Prologue = noisegate_protocol:prologue(noisegate_protocol:hello_header(SuiteId), Name),
     ProtocolName = noisegate_protocol:noise_name(Suite),
     Init = noise_state(ProtocolName, Prologue, initiator),
     Resp = noise_state(ProtocolName, Prologue, responder),
     NamePayload = noisegate_protocol:encode_name(Name),
-    {ok, send, Msg1, Init1} = enoise:step_handshake(Init, {send, <<>>}),
-    {ok, rcvd, <<>>, Resp1} = enoise:step_handshake(Resp, {rcvd, Msg1}),
-    {ok, send, Msg2, Resp2} = enoise:step_handshake(Resp1, {send, NamePayload}),
-    {ok, rcvd, NamePayload, Init2} = enoise:step_handshake(Init1, {rcvd, Msg2}),
-    {ok, send, Msg3, Init3} = enoise:step_handshake(Init2, {send, NamePayload}),
-    {ok, rcvd, NamePayload, Resp3} = enoise:step_handshake(Resp2, {rcvd, Msg3}),
-    {ok, done, _} = enoise:step_handshake(Init3, done),
-    {ok, done, _} = enoise:step_handshake(Resp3, done),
+    {ok, send, Msg1, Init1} = herrie:step_handshake(Init, {send, <<>>}),
+    {ok, rcvd, <<>>, Resp1} = herrie:step_handshake(Resp, {rcvd, Msg1}),
+    {ok, send, Msg2, Resp2} = herrie:step_handshake(Resp1, {send, NamePayload}),
+    {ok, rcvd, NamePayload, Init2} = herrie:step_handshake(Init1, {rcvd, Msg2}),
+    {ok, send, Msg3, Init3} = herrie:step_handshake(Init2, {send, NamePayload}),
+    {ok, rcvd, NamePayload, Resp3} = herrie:step_handshake(Resp2, {rcvd, Msg3}),
+    {ok, done, _} = herrie:step_handshake(Init3, done),
+    {ok, done, _} = herrie:step_handshake(Resp3, done),
     {Msg1, Msg2, Msg3}.
 
 noise_state(ProtocolName, Prologue, Role) ->
     Options = [{noise, ProtocolName},
-               {s, enoise_keypair:new(dh25519)},
-               {e, enoise_keypair:new(dh25519)},
+               {s, herrie_keypair:new(dh25519)},
+               {e, herrie_keypair:new(dh25519)},
                {prologue, Prologue}],
-    {ok, State} = enoise:handshake(Options, Role),
+    {ok, State} = herrie:handshake(Options, Role),
     State.
 
 flip_byte(Binary, Index) ->

@@ -1,5 +1,5 @@
 %% Tests for the TRANSPORT FRAMING section of noisegate_protocol, using real
-%% enoise cipher states from a loopback handshake.
+%% herrie cipher states from a loopback handshake.
 -module(noisegate_protocol_transport_tests).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -22,24 +22,24 @@
 %% Returns the transmit cipher state of the initiator and the receive cipher
 %% state of the responder: a one directional channel.
 handshake(Name) ->
-    Opts = fun() -> [{noise, Name}, {s, enoise_keypair:new(dh25519)}] end,
-    {ok, I} = enoise:handshake(Opts(), initiator),
-    {ok, R} = enoise:handshake(Opts(), responder),
+    Opts = fun() -> [{noise, Name}, {s, herrie_keypair:new(dh25519)}] end,
+    {ok, I} = herrie:handshake(Opts(), initiator),
+    {ok, R} = herrie:handshake(Opts(), responder),
     hs_run(I, R).
 
 hs_run(I, R) ->
-    case {enoise_hs_state:next_message(I), enoise_hs_state:next_message(R)} of
+    case {herrie_hs_state:next_message(I), herrie_hs_state:next_message(R)} of
         {out, in} ->
-            {ok, send, Msg, I1} = enoise:step_handshake(I, {send, <<>>}),
-            {ok, rcvd, _, R1} = enoise:step_handshake(R, {rcvd, Msg}),
+            {ok, send, Msg, I1} = herrie:step_handshake(I, {send, <<>>}),
+            {ok, rcvd, _, R1} = herrie:step_handshake(R, {rcvd, Msg}),
             hs_run(I1, R1);
         {in, out} ->
-            {ok, send, Msg, R1} = enoise:step_handshake(R, {send, <<>>}),
-            {ok, rcvd, _, I1} = enoise:step_handshake(I, {rcvd, Msg}),
+            {ok, send, Msg, R1} = herrie:step_handshake(R, {send, <<>>}),
+            {ok, rcvd, _, I1} = herrie:step_handshake(I, {rcvd, Msg}),
             hs_run(I1, R1);
         {done, done} ->
-            {ok, done, #{tx := Tx}} = enoise:step_handshake(I, done),
-            {ok, done, #{rx := Rx}} = enoise:step_handshake(R, done),
+            {ok, done, #{tx := Tx}} = herrie:step_handshake(I, done),
+            {ok, done, #{rx := Rx}} = herrie:step_handshake(R, done),
             {Tx, Rx}
     end.
 
@@ -91,7 +91,7 @@ feed_bytewise(R, Bytes) ->
 
 %% Raw cipher state access (the proxy/crafting side of the tests).
 raw_decrypt(CS, <<Len:16, Cipher/binary>>) when byte_size(Cipher) =:= Len ->
-    case enoise_cipher_state:decrypt_with_ad(CS, <<Len:16>>, Cipher) of
+    case herrie_cipher_state:decrypt_with_ad(CS, <<Len:16>>, Cipher) of
         {ok, CS1, <<Flags, Rest/binary>>} -> {ok, CS1, Flags, Rest};
         {error, _} = E -> E
     end.
@@ -99,14 +99,14 @@ raw_decrypt(CS, <<Len:16, Cipher/binary>>) when byte_size(Cipher) =:= Len ->
 craft(CS, Flags, Rest) ->
     Plain = <<Flags, Rest/binary>>,
     Len = byte_size(Plain) + 16,
-    {ok, CS1, Cipher} = enoise_cipher_state:encrypt_with_ad(CS, <<Len:16>>, Plain),
+    {ok, CS1, Cipher} = herrie_cipher_state:encrypt_with_ad(CS, <<Len:16>>, Plain),
     {<<Len:16, Cipher/binary>>, CS1}.
 
 %% Noise Rekey(): new key, same nonce counter.
 raw_rekey(CS) ->
-    enoise_cipher_state:rekey(CS).
+    herrie_cipher_state:rekey(CS).
 
-%% Independent AEAD implementation on plain OTP crypto, to check enoise against.
+%% Independent AEAD implementation on plain OTP crypto, to check herrie against.
 -define(MAX_NONCE, 16#FFFFFFFFFFFFFFFF).
 
 otp_cipher(?AESGCM) -> aes_256_gcm;
@@ -157,23 +157,23 @@ deflate_raw(Data) ->
     Out.
 
 %%% ------------------------------------------------------------------
-%%% enoise facts the section relies on
+%%% herrie facts the section relies on
 %%% ------------------------------------------------------------------
 
-enoise_rekey_matches_noise_spec_test_() ->
+herrie_rekey_matches_noise_spec_test_() ->
     [{Name, fun() ->
         {Tx, _} = handshake(Name),
-        Key = enoise_cipher_state:key(Tx),
+        Key = herrie_cipher_state:key(Tx),
         Expected = otp_rekey(Name, Key),
-        Rekeyed = enoise_cipher_state:rekey(Tx),
-        ?assertEqual(32, byte_size(enoise_cipher_state:key(Rekeyed))),
-        ?assertEqual(Expected, enoise_cipher_state:key(Rekeyed)),
+        Rekeyed = herrie_cipher_state:rekey(Tx),
+        ?assertEqual(32, byte_size(herrie_cipher_state:key(Rekeyed))),
+        ?assertEqual(Expected, herrie_cipher_state:key(Rekeyed)),
         %% the nonce counter continues: after 3 frames the next one uses nonce 3
         {_, Tx3} = lists:foldl(fun(_, {_, CS}) ->
-                                       {ok, CS1, C} = enoise_cipher_state:encrypt_with_ad(CS, <<>>, <<"x">>),
+                                       {ok, CS1, C} = herrie_cipher_state:encrypt_with_ad(CS, <<>>, <<"x">>),
                                        {C, CS1}
                                end, {none, Tx}, lists:seq(1, 3)),
-        {ok, _, Cipher} = enoise_cipher_state:encrypt_with_ad(enoise_cipher_state:rekey(Tx3), <<>>, <<"y">>),
+        {ok, _, Cipher} = herrie_cipher_state:encrypt_with_ad(herrie_cipher_state:rekey(Tx3), <<>>, <<"y">>),
         {C3, T3} = otp_encrypt(Name, Expected, 3, <<>>, <<"y">>),
         ?assertEqual(<<C3/binary, T3/binary>>, Cipher)
     end} || Name <- ?SUITES].
@@ -699,7 +699,7 @@ rekey_stays_in_sync_over_10_rekeys_test_() ->
 rekey_continues_nonce_and_matches_otp_crypto_test_() ->
     [{Name, fun() ->
         {Tx, _} = handshake(Name),
-        K = enoise_cipher_state:key(Tx),
+        K = herrie_cipher_state:key(Tx),
         K2 = otp_rekey(Name, K),
         ?assertEqual(32, byte_size(K2)),
         ?assertNotEqual(K, K2),
@@ -1146,7 +1146,7 @@ validated_policy_is_accepted_again_test() ->
     ?assertMatch(tx, element(1, S)).
 
 unkeyed_cipher_state_is_refused_test() ->
-    CS = enoise_cipher_state:init(empty, 'AESGCM'),
+    CS = herrie_cipher_state:init(empty, 'AESGCM'),
     ?assertError(badarg, new_sender(CS, #{})),
     ?assertError(badarg, new_receiver(CS, #{})).
 

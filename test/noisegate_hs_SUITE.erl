@@ -131,8 +131,8 @@ responder_rejects_denied_initiator(Config) ->
     IName = ?config(i_name, Config),
     RKeys = ?config(r_keys, Config),
     IKeys = ?config(i_keys, Config),
-    OtherKeyPair = enoise_keypair:new(dh25519),
-    {ok, _} = noisegate_keys:add_peer(IName, enoise_keypair:pubkey(OtherKeyPair),
+    OtherKeyPair = herrie_keypair:new(dh25519),
+    {ok, _} = noisegate_keys:add_peer(IName, herrie_keypair:pubkey(OtherKeyPair),
                                     #{authorized_dirs => [?config(r_auth, Config)],
                                       node_name => IName}),
     ok = add_peer(RName, noisegate_keys:public(RKeys), ?config(i_auth, Config)),
@@ -406,17 +406,17 @@ start_malicious_responder(Target, MessageName, Keys) ->
                             noisegate_protocol:parse_hello_header(HelloHeader, [2]),
                         {ok, Msg1} = gen_tcp:recv(Socket, 32, 1000),
                         Prologue = noisegate_protocol:prologue(HelloHeader, Target),
-                        KeyPair = enoise_keypair:new(dh25519, noisegate_keys:secret(Keys),
+                        KeyPair = herrie_keypair:new(dh25519, noisegate_keys:secret(Keys),
                                                      noisegate_keys:public(Keys)),
                         {ok, State0} =
-                            enoise:handshake([{noise,
+                            herrie:handshake([{noise,
                                               noisegate_protocol:noise_name(aesgcm_sha512)},
                                              {prologue, Prologue}, {s, KeyPair}],
                                             responder),
                         {ok, rcvd, <<>>, State1} =
-                            enoise:step_handshake(State0, {rcvd, Msg1}),
+                            herrie:step_handshake(State0, {rcvd, Msg1}),
                         {ok, send, Msg2, _State2} =
-                            enoise:step_handshake(
+                            herrie:step_handshake(
                               State1, {send, noisegate_protocol:encode_name(MessageName)}),
                         ok = gen_tcp:send(Socket, noisegate_protocol:reply_ok(Msg2)),
                         Result = gen_tcp:recv(Socket, 2, 1000),
@@ -533,14 +533,14 @@ packet_frames(Sender, Pending, Acc) ->
     end.
 
 require_suite(Suite) ->
-    Probe = try enoise:handshake([{noise, noisegate_protocol:noise_name(Suite)}], initiator)
+    Probe = try herrie:handshake([{noise, noisegate_protocol:noise_name(Suite)}], initiator)
             catch
                 _:_ -> unsupported
             end,
     case Probe of
         {ok, _State} -> ok;
         {error, Reason} ->
-            ct:skip(io_lib:format("enoise lacks ~p: ~p", [Suite, Reason]));
+            ct:skip(io_lib:format("herrie lacks ~p: ~p", [Suite, Reason]));
         unsupported ->
-            ct:skip(io_lib:format("enoise lacks ~p", [Suite]))
+            ct:skip(io_lib:format("herrie lacks ~p", [Suite]))
     end.
