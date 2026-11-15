@@ -41,21 +41,26 @@
 -define(MAX_NAME, 255).
 
 -type node_name() :: atom() | binary() | string().
--type opts() :: #{dir => file:filename(),
-                  generate => boolean(),
+-type opts() :: #{dir             => file:filename(),
+                  generate        => boolean(),
                   authorized_dirs => [file:filename()] | string(),
-                  keygen => fun(() -> {binary(), binary()}),
-                  node_name => node_name(),
-                  comment => binary() | string()}.
--type peer_entry() :: #{name := binary(), key := binary(), fingerprint := string(),
-                        comment := binary(), file := file:filename(), dir := file:filename()}.
--type skipped() :: #{file := file:filename(), reason := term()}.
+                  keygen          => fun(() -> {binary(), binary()}),
+                  node_name       => node_name(),
+                  comment         => binary() | string()}.
+-type peer_entry() :: #{name        := binary(),
+                        key         := binary(),
+                        fingerprint := string(),
+                        comment     := binary(),
+                        file        := file:filename(),
+                        dir         := file:filename()}.
+-type skipped() :: #{file   := file:filename(),
+                     reason := term()}.
 %% The secret is only reachable through secret/1, so that printing or logging
 %% a key_info() cannot leak it.
--opaque key_info() :: #{public := binary(),
-                        secret := fun(() -> binary()),
+-opaque key_info() :: #{public      := binary(),
+                        secret      := fun(() -> binary()),
                         fingerprint := binary(),
-                        generated := boolean()}.
+                        generated   := boolean()}.
 
 %%
 %% Settings
