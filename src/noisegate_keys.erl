@@ -5,7 +5,7 @@
 %% This module is called while the VM is still booting (from `listen/2`), so it is
 %% made of pure functions and file I/O only: no processes, no ETS, no application
 %% environment. Settings come from an `Opts` map, `-noisegate Key Value` init
-%% arguments, `BOUNCER_*` environment variables, and defaults (in that order).
+%% arguments, `NOISEGATE_*` environment variables, and defaults (in that order).
 %% 
 %% Node names and keys received from the network are untrusted: they are never
 %% used to build file paths. Authorization is done by parsing the contents of the
@@ -148,7 +148,7 @@ pairs([K, V | Rest]) -> [{K, V} | pairs(Rest)];
 pairs(_) -> [].
 
 env(Key) ->
-    case os:getenv("BOUNCER_" ++ string:uppercase(atom_to_list(Key))) of
+    case os:getenv("NOISEGATE_" ++ string:uppercase(atom_to_list(Key))) of
         false -> error;
         "" -> error;
         V -> {ok, V}

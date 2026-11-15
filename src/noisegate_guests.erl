@@ -155,7 +155,7 @@ usage() ->
     "  check NAME FINGERPRINT             exit 0 if NAME has an entry with this fingerprint\n"
     "\n"
     "Options (all commands):\n"
-    "  --dir DIR             node key directory (default: $BOUNCER_DIR, then the user config dir)\n"
+    "  --dir DIR             node key directory (default: $NOISEGATE_DIR, then the user config dir)\n"
     "  --authorized-dir DIR  authorized directory, repeatable; `add` writes to the first\n"
     "  --node NAME           this node's name (to locate the default key directory)\n"
     "  -q, --quiet           only print errors and the primary result value\n"
@@ -508,15 +508,15 @@ require_node(O) ->
     end.
 
 %% The node name is only used for default directories; without --node the
-%% directories must be given explicitly (options or BOUNCER_* environment).
+%% directories must be given explicitly (options or NOISEGATE_* environment).
 node_for(O) ->
     case maps:find(node, O) of
         {ok, _} ->
             require_node(O);
         error ->
             Explicit = maps:is_key(dir, O) orelse maps:is_key(authorized_dir, O)
-                orelse env_set("BOUNCER_DIR")
-                orelse env_set("BOUNCER_AUTHORIZED_DIRS"),
+                orelse env_set("NOISEGATE_DIR")
+                orelse env_set("NOISEGATE_AUTHORIZED_DIRS"),
             Explicit orelse throw({usage, "need --node, --dir or --authorized-dir"}),
             ?PLACEHOLDER_NODE
     end.

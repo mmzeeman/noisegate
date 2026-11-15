@@ -303,7 +303,7 @@ list_test_() ->
       end) end},
      {"needs a directory or a node",
       fun() ->
-          case {os:getenv("BOUNCER_DIR"), os:getenv("BOUNCER_AUTHORIZED_DIRS")} of
+          case {os:getenv("NOISEGATE_DIR"), os:getenv("NOISEGATE_AUTHORIZED_DIRS")} of
               {false, false} -> ?assertMatch({2, _, _}, run(["list"]));
               _ -> ok
           end

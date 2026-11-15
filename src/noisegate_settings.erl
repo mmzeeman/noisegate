@@ -92,7 +92,7 @@ environment_settings() ->
             "max_bytes_without_rekey", "handshake_timeout_ms", "suite",
             "accept_suites", "max_pending", "send_timeout_ms"],
     lists:foldl(fun(Key, Acc) ->
-                        case os:getenv("BOUNCER_" ++ string:uppercase(Key)) of
+                        case os:getenv("NOISEGATE_" ++ string:uppercase(Key)) of
                             false -> Acc;
                             "" -> Acc;
                             Value -> maps:put(Key, Value, Acc)

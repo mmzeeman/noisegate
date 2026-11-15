@@ -104,7 +104,7 @@ line and fingerprint:
     alice@alice.example.com <base64 public key>
     Fingerprint: SHA256:...
 
-Without `--dir` the tool uses `$BOUNCER_DIR`, then the user config
+Without `--dir` the tool uses `$NOISEGATE_DIR`, then the user config
 directory. Repeat on bob, carol and dave with their own names and
 directories. Use `--no-generate` to create only the directories.
 
@@ -239,7 +239,7 @@ With a release, put these options in `vm.args`:
 ## Carrier settings
 
 Values can be provided as `-noisegate Key Value` arguments or through matching
-`BOUNCER_KEY` environment variables. Explicit options take precedence over
+`NOISEGATE_KEY` environment variables. Explicit options take precedence over
 flags, flags over environment, and environment over defaults. Invalid values
 make distribution startup fail with the setting name and accepted values.
 
@@ -272,7 +272,7 @@ This follows the `inet_tls_dist` startup pattern: the carrier exports
 `childspecs/0`, the distribution supervisor starts before `net_kernel`, and
 runtime readers consult ETS settings. The difference is that TLS
 loads server/client settings from `-ssl_dist_optfile` in its supervisor, while
-Noisegate combines `-noisegate` flags, `BOUNCER_*` values and defaults, then waits
+Noisegate combines `-noisegate` flags, `NOISEGATE_*` values and defaults, then waits
 until `listen/2` supplies the node name before loading the identity key.
 Transport policy options include `chunk_size`, `padding`, `compression`,
 `rekey_after`, `max_packet`, `accept_compression`, and
@@ -294,13 +294,13 @@ Build (result: `_build/default/bin/noisegate_guests`):
 
 Usage: `noisegate_guests <command> [options]`. Global options:
 
-    --dir DIR             node key directory (default: $BOUNCER_DIR, then the user config dir/NodeName)
+    --dir DIR             node key directory (default: $NOISEGATE_DIR, then the user config dir/NodeName)
     --authorized-dir DIR  authorized directory, repeatable; `add` writes to the first one
     --node NAME           this node's name (needed for the default directories)
     -q, --quiet           only print errors and the primary result value
     -h, --help
 
-Without `--node`, `--dir` or `--authorized-dir` (or the matching `BOUNCER_*`
+Without `--node`, `--dir` or `--authorized-dir` (or the matching `NOISEGATE_*`
 variables) must be given. Exit codes: 0 ok, 1 not found, 2 usage error
 (including an invalid name, key or comment), 3 error (I/O, permissions, invalid
 key file or refused directory), 4 fingerprint mismatch. Errors go to stderr.
