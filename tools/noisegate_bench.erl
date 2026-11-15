@@ -47,7 +47,8 @@ main() ->
 
 run(Options) ->
     _ = os:cmd("epmd -daemon"),
-    ok = code:add_paths(filelib:wildcard("_build/default/lib/*/ebin")),
+    ok = code:add_paths(filelib:wildcard("_build/default/lib/*/ebin")
+                        ++ filelib:wildcard("_build/default/checkouts/*/ebin")),
     ok = logger:set_primary_config(level, emergency),
     {ok, Device, Close} = output_device(maps:get(output, Options)),
     try
@@ -275,22 +276,20 @@ run_with_pair(Carrier, Root, Settings, Fun) ->
 
 start_pair(Carrier, Root, Settings) ->
     Tag = integer_to_list(erlang:unique_integer([positive])),
-    {PeerA, NameA, _NodeA, AuthA, KeysA} =
-        start_node(Carrier, Root, "a_" ++ Tag, Settings),
+    {PeerA, NodeNameA, _NodeA, AuthA, KeysA} = start_node(Carrier, Root, "a_" ++ Tag, Settings),
     try
-        {PeerB, NameB, NodeB, AuthB, KeysB} =
-            start_node(Carrier, Root, "b_" ++ Tag, Settings),
+        {PeerB, NodeNameB, NodeB, AuthB, KeysB} = start_node(Carrier, Root, "b_" ++ Tag, Settings),
         try
             case Carrier of
                 inet_tcp -> ok;
                 inet_tls -> ok;
                 noisegate ->
-                    {ok, _} = noisegate_keys:add_peer(
-                                NameA, noisegate_keys:public(KeysA),
-                                #{authorized_dirs => AuthB, node_name => NameB}),
-                    {ok, _} = noisegate_keys:add_peer(
-                                NameB, noisegate_keys:public(KeysB),
-                                #{authorized_dirs => AuthA, node_name => NameA})
+                    {ok, _} = noisegate_keys:add_peer(NodeNameA,
+                                                      noisegate_keys:public(KeysA),
+                                                      #{authorized_dirs => AuthB, node_name => NodeNameB}),
+                    {ok, _} = noisegate_keys:add_peer(NodeNameB,
+                                                      noisegate_keys:public(KeysB),
+                                                      #{authorized_dirs => AuthA, node_name => NodeNameA})
             end,
             {PeerA, PeerB, NodeB}
         catch
@@ -325,8 +324,7 @@ start_node(Carrier, Root, Suffix, Settings) ->
                   "-noisegate", "generate", "false",
                   "-noisegate", "accept_compression", "true",
                   "-noisegate", "padding", "none", % Not configurable in the benchmark
-                  "-noisegate", "accept_suites",
-                  string:join(?SUITES, ","),
+                  "-noisegate", "accept_suites", string:join(?SUITES, ","),
                   "-noisegate", "suite", maps:get(suite, Settings),
                   "-noisegate", "compression", maps:get(compression, Settings),
                   "-noisegate", "chunk_size", integer_to_list(maps:get(chunk_size, Settings))]}
@@ -345,8 +343,10 @@ start_node(Carrier, Root, Suffix, Settings) ->
     case peer:start_link(#{name => Name, host => "127.0.0.1",
                            longnames => true, connection => standard_io,
                            args => Args}) of
-        {ok, Peer, Node} -> {Peer, NodeName, Node, AuthDir, Keys};
-        {error, Reason} -> error({peer_start_failed, Name, Reason})
+        {ok, Peer, Node} ->
+            {Peer, NodeName, Node, AuthDir, Keys};
+        {error, Reason} ->
+            error({peer_start_failed, Name, Reason})
     end.
 
 %% One throwaway certificate shared by both nodes; peers are not verified

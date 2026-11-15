@@ -10,4 +10,5 @@ erlc -o _build/tools tools/noisegate_bench.erl
 
 exec erl -noshell -name "noisegate_bench_$$@127.0.0.1" \
     -pa "$ROOT/_build/tools" -pa "$ROOT"/_build/default/lib/*/ebin \
+    -pa "$ROOT/_build/tools" -pa "$ROOT"/_build/default/checkouts/*/ebin \
     -s noisegate_bench main -extra "$@"
