@@ -163,11 +163,11 @@ deflate_raw(Data) ->
 herrie_rekey_matches_noise_spec_test_() ->
     [{Name, fun() ->
         {Tx, _} = handshake(Name),
-        Key = herrie_cipher_state:key(Tx),
+        Key = herrie_cipher_state_key(Tx),
         Expected = otp_rekey(Name, Key),
         Rekeyed = herrie_cipher_state:rekey(Tx),
-        ?assertEqual(32, byte_size(herrie_cipher_state:key(Rekeyed))),
-        ?assertEqual(Expected, herrie_cipher_state:key(Rekeyed)),
+        ?assertEqual(32, byte_size(herrie_cipher_state_key(Rekeyed))),
+        ?assertEqual(Expected, herrie_cipher_state_key(Rekeyed)),
         %% the nonce counter continues: after 3 frames the next one uses nonce 3
         {_, Tx3} = lists:foldl(fun(_, {_, CS}) ->
                                        {ok, CS1, C} = herrie_cipher_state:encrypt_with_ad(CS, <<>>, <<"x">>),
@@ -699,7 +699,7 @@ rekey_stays_in_sync_over_10_rekeys_test_() ->
 rekey_continues_nonce_and_matches_otp_crypto_test_() ->
     [{Name, fun() ->
         {Tx, _} = handshake(Name),
-        K = herrie_cipher_state:key(Tx),
+        K = herrie_cipher_state_key(Tx),
         K2 = otp_rekey(Name, K),
         ?assertEqual(32, byte_size(K2)),
         ?assertNotEqual(K, K2),
@@ -1183,3 +1183,8 @@ new_receiver(A, B) ->
     Policy = maps:merge(#{max_packet => 67108864, accept_compression => false,
                           max_bytes_without_rekey => infinity}, B),
     ?P:rx_start(?P:new_receiver(A, Policy)).
+
+%% The function to export the key has been removed from the original api. Retrieve
+%% it for testing purposes
+herrie_cipher_state_key({noise_cs, Key, _, _}) ->
+    Key().
