@@ -8,8 +8,11 @@
 
 Requires Erlang/OTP 26 or newer (tested on 27, 28 and 29).
 
-Erlang distribution over a Noise protocol transport, built on
-[enoise](https://github.com/mmzeeman/enoise) (bugfix branch).
+Noisegate provides Erlang distribution over a Noise Protocol transport, built on
+[herrie](https://github.com/mmzeeman/herrie).
+
+Herrie is an adapted implementation of the Noise Protocol based on aeternity's enoise,
+with additional key wrapping to prevent accidental exposure of key material.
 
 ## Introduction
 
