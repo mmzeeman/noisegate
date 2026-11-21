@@ -6,7 +6,7 @@
 
 [![CI](https://github.com/mmzeeman/noisegate/actions/workflows/ci.yml/badge.svg)](https://github.com/mmzeeman/noisegate/actions/workflows/ci.yml)
 
-Requires Erlang/OTP 26 or newer (tested on 27).
+Requires Erlang/OTP 26 or newer (tested on 27, 28 and 29).
 
 Erlang distribution over a Noise protocol transport, built on
 [enoise](https://github.com/mmzeeman/enoise) (bugfix branch).
