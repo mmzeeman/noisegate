@@ -6,7 +6,7 @@
 
 [![CI](https://github.com/mmzeeman/noisegate/actions/workflows/ci.yml/badge.svg)](https://github.com/mmzeeman/noisegate/actions/workflows/ci.yml)
 
-Requires Erlang/OTP 26 or newer (tested on 27, 28 and 29).
+Requires Erlang/OTP 27 or newer (tested on 27, 28 and 29).
 
 Noisegate provides Erlang distribution over a Noise Protocol transport, built on
 [herrie](https://github.com/mmzeeman/herrie).
