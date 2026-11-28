@@ -542,3 +542,113 @@ add_peer_comment_test_() ->
           ?assertEqual({error, invalid_comment}, noisegate_keys:add_peer(<<"c@h">>, K, O#{comment => <<"a\rb">>})),
           ?assertEqual(2, length(element(2, file:list_dir(Dir))))
       end) end}].
+
+static_authorized_keys_test_() ->
+    [{"tuples authorize like .pub files",
+      fun() ->
+          K1 = new_pub(), K2 = new_pub(), Other = new_pub(),
+          O = #{authorized_keys => [{<<"a@h">>, base64:encode(K1)},
+                                    {"b@h", base64:encode(K2)}],
+                node_name => <<"me@h">>},
+          ?assertEqual(allowed, noisegate_keys:check_peer(<<"a@h">>, K1, O)),
+          ?assertEqual(allowed, noisegate_keys:check_peer(<<"b@h">>, K2, O)),
+          ?assertEqual(denied, noisegate_keys:check_peer(<<"a@h">>, Other, O)),
+          ?assertEqual(unknown_name, noisegate_keys:check_peer(<<"c@h">>, K1, O)),
+          ?assertEqual(denied, noisegate_keys:check_peer(<<"a@h">>, <<1, 2>>, O))
+      end},
+     {"atom names and raw 32-byte keys are accepted",
+      fun() ->
+          K = new_pub(),
+          O = #{authorized_keys => [{'a@h', K}, {<<"b@h">>, K}],
+                node_name => <<"me@h">>},
+          ?assertEqual(allowed, noisegate_keys:check_peer(<<"a@h">>, K, O)),
+          ?assertEqual(allowed, noisegate_keys:check_peer(<<"b@h">>, K, O))
+      end},
+     {"authorized lines and multi-line strings are accepted",
+      fun() ->
+          K1 = new_pub(), K2 = new_pub(), K3 = new_pub(),
+          Lines = <<"a@h ", (base64:encode(K1))/binary, "\n",
+                    "b@h ", (base64:encode(K2))/binary, " worker\n\n">>,
+          O = #{authorized_keys => [Lines, "c@h " ++ binary_to_list(base64:encode(K3))],
+                node_name => <<"me@h">>},
+          [?assertEqual(allowed, noisegate_keys:check_peer(N, K, O)) ||
+              {N, K} <- [{<<"a@h">>, K1}, {<<"b@h">>, K2}, {<<"c@h">>, K3}]],
+          {ok, Entries, []} = noisegate_keys:list_peers(O),
+          ?assertEqual(3, length(Entries)),
+          ?assert(lists:all(fun(#{static := S}) -> S end, Entries)),
+          ?assert(lists:any(fun(#{name := N, comment := C}) ->
+                                N =:= <<"b@h">> andalso C =:= <<"worker">>
+                            end, Entries))
+      end},
+     {"no default authorized.d when only authorized_keys is set",
+      fun() -> with_dir(fun(B) ->
+          O = (keyopts(B))#{authorized_keys => [{"a@h", base64:encode(new_pub())}],
+                            node_name => <<"me@h">>},
+          ?assertEqual([], noisegate_keys:authorized_dirs(<<"me@h">>, O)),
+          K = new_pub(),
+          Line = noisegate_keys:authorized_line(<<"zz@h">>, K),
+          ok = filelib:ensure_path(filename:join(maps:get(dir, O), "authorized.d")),
+          ok = file:write_file(filename:join([maps:get(dir, O), "authorized.d", "zz.pub"]), Line),
+          ?assertEqual(unknown_name, noisegate_keys:check_peer(<<"zz@h">>, K, O))
+      end) end},
+     {"explicit authorized_dirs are honored next to authorized_keys",
+      fun() -> with_dir(fun(B) ->
+          {Dir, O0} = auth_opts(B),
+          K1 = new_pub(), K2 = new_pub(),
+          write_pub(Dir, "a.pub", noisegate_keys:authorized_line(<<"a@h">>, K1)),
+          O = O0#{authorized_keys => [{"b@h", base64:encode(K2)}]},
+          ?assertEqual(allowed, noisegate_keys:check_peer(<<"a@h">>, K1, O)),
+          ?assertEqual(allowed, noisegate_keys:check_peer(<<"b@h">>, K2, O))
+      end) end},
+     {"malformed entries are skipped with a warning",
+      fun() ->
+          K = new_pub(),
+          O = #{authorized_keys => [{"a@h", base64:encode(K)}, {"b@h", "not-base64!"}, 42],
+                node_name => <<"me@h">>},
+          {allowed, Logs} = with_log(fun() -> noisegate_keys:check_peer(<<"a@h">>, K, O) end),
+          ?assertEqual(allowed, allowed),
+          ?assertEqual(2, length([L || L <- Logs, string:find(L, "authorized_keys") =/= nomatch]))
+      end},
+     {"add_peer needs a directory, remove_peer finds nothing",
+      fun() ->
+          O = #{authorized_keys => [{"a@h", base64:encode(new_pub())}],
+                node_name => <<"me@h">>},
+          ?assertEqual({error, no_authorized_dir},
+                       noisegate_keys:add_peer(<<"b@h">>, new_pub(), O)),
+          ?assertEqual({error, not_found},
+                       noisegate_keys:remove_peer(<<"a@h">>, "SHA256:x", O))
+      end}].
+
+key_file_test_() ->
+    [{"key_file names the identity file inside the key dir",
+      fun() -> with_dir(fun(B) ->
+          O = (keyopts(B))#{key_file => "custom_x25519"},
+          {ok, Info} = noisegate_keys:load_or_generate(<<"a@h">>, O),
+          Path = filename:join(maps:get(dir, O), "custom_x25519"),
+          {ok, Info2} = noisegate_keys:load_or_generate(<<"a@h">>, O),
+          ?assertEqual(noisegate_keys:public(Info), noisegate_keys:public(Info2)),
+          ?assertNot(noisegate_keys:generated(Info2)),
+          ?assertMatch({ok, _}, file:read_link_info(Path)),
+          ?assertMatch({error, _}, file:read_link_info(filename:join(maps:get(dir, O), "id_x25519")))
+      end) end},
+     {"path components are stripped; invalid values warn and fall back",
+      fun() -> with_dir(fun(B) ->
+          O = (keyopts(B))#{key_file => "../escape"},
+          {ok, _} = noisegate_keys:load_or_generate(<<"a@h">>, O),
+          ?assertMatch({ok, _}, file:read_link_info(filename:join(maps:get(dir, O), "escape"))),
+          {ok, _Logs} = with_log(fun() ->
+              O2 = (keyopts(B))#{key_file => 42},
+              {ok, _} = noisegate_keys:load_or_generate(<<"a@h">>, O2),
+              ?assertMatch({ok, _}, file:read_link_info(filename:join(maps:get(dir, O2), "id_x25519"))),
+              ok
+          end)
+      end) end},
+     {"NOISEGATE_KEY_FILE env is honored",
+      fun() -> with_dir(fun(B) ->
+          true = os:putenv("NOISEGATE_KEY_FILE", "env_x25519"),
+          try
+              O = keyopts(B),
+              {ok, _} = noisegate_keys:load_or_generate(<<"a@h">>, O),
+              ?assertMatch({ok, _}, file:read_link_info(filename:join(maps:get(dir, O), "env_x25519")))
+          after os:unsetenv("NOISEGATE_KEY_FILE") end
+      end) end}].
