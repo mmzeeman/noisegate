@@ -114,10 +114,11 @@ directories. Use `--no-generate` to create only the directories.
 ### 3. Exchange and install the public lines
 
 A node accepts a connection only when the peer's announced name and
-public key match an entry in its authorized directories. For the full
-mesh, every node needs the other three lines. Since `add` accepts the
-exact output of `show --self` on stdin, a peer's line can be pulled
-straight over ssh:
+public key match an entry in its authorized directories (or in its
+static `authorized_keys`, see [Configuration file](#configuration-file)).
+For the full mesh, every node needs the other three lines. Since `add`
+accepts the exact output of `show --self` on stdin, a peer's line can be
+pulled straight over ssh:
 
     ssh bob.example.com \
         noisegate_guests show --self --node bob@bob.example.com \
@@ -162,6 +163,10 @@ flags):
     -proto_dist noisegate
     -noisegate dir /var/lib/noisegate/alice
 
+Alternatively, put all settings in a configuration file and point to it
+with `-noisegate_optfile` (see [Configuration file](#configuration-file));
+this is the easiest route for Kubernetes and Docker setups.
+
 `authorized_dirs` defaults to `<dir>/authorized.d`, which is where
 `noisegate_guests` writes. The distribution port is chosen dynamically
 and registered with epmd; pin it with the usual kernel options:
@@ -205,8 +210,9 @@ connection, call `net_kernel:disconnect/1` on the node itself.
 
 - `noisegate_guests` never talks to a running node and never moves
   private keys: `id_x25519` stays on its machine, and `noisegate_keys`
-  re-reads the authorized directories on every handshake, so changes
-  apply to the next connection without a restart.
+  re-reads the authorized directories (and the static `authorized_keys`)
+  on every handshake, so changes apply to the next connection without a
+  restart.
 - Authorized directories and `.pub` files must not be writable by
   group or others; symlinks are refused.
 
@@ -241,10 +247,12 @@ With a release, put these options in `vm.args`:
 
 ## Carrier settings
 
-Values can be provided as `-noisegate Key Value` arguments or through matching
-`NOISEGATE_KEY` environment variables. Explicit options take precedence over
-flags, flags over environment, and environment over defaults. Invalid values
-make distribution startup fail with the setting name and accepted values.
+Values can be provided as `-noisegate Key Value` arguments, through matching
+`NOISEGATE_KEY` environment variables, or in a configuration file (see the next
+section). Explicit options take precedence over flags, flags over environment,
+environment over the configuration file, and the configuration file over
+defaults. Invalid values make distribution startup fail with the setting name
+and accepted values.
 
 The distribution module's `childspecs/0` starts `noisegate_dist_sup` under
 `net_sup` before `net_kernel` and before applications are started. The supervisor
@@ -275,13 +283,91 @@ This follows the `inet_tls_dist` startup pattern: the carrier exports
 `childspecs/0`, the distribution supervisor starts before `net_kernel`, and
 runtime readers consult ETS settings. The difference is that TLS
 loads server/client settings from `-ssl_dist_optfile` in its supervisor, while
-Noisegate combines `-noisegate` flags, `NOISEGATE_*` values and defaults, then waits
+Noisegate combines `-noisegate` flags, `NOISEGATE_*` values,
+`-noisegate_optfile` settings and defaults, then waits
 until `listen/2` supplies the node name before loading the identity key.
 Transport policy options include `chunk_size`, `padding`, `compression`,
 `rekey_after`, `max_packet`, `accept_compression`, and
 `max_bytes_without_rekey`. Carrier options are `handshake_timeout_ms` (5000),
 `suite` (`aesgcm_sha512`), `accept_suites` (`aesgcm_sha512`),
 `max_pending` (64), and `send_timeout_ms` (30000).
+
+## Configuration file
+
+For containers and orchestrated environments, all settings can live in a
+single configuration file, in the same spirit as `-ssl_dist_optfile` for
+TLS distribution. Point to it with a `-noisegate_optfile Path` flag, a
+`-noisegate optfile Path` flag, or the `NOISEGATE_OPTFILE` environment
+variable (in that order of preference, after the `optfile` option). The
+file uses Erlang term syntax: one `{Key, Value}.` tuple per setting, with
+the same keys and value forms as the flags and environment variables
+(native terms and their string forms are both accepted):
+
+    %% /etc/noisegate/noisegate.cfg
+    {dir, "/var/lib/noisegate"}.
+    {suite, aesgcm_blake2b}.
+    {chunk_size, 16384}.
+    {compression, {zlib, 256}}.
+    {accept_compression, true}.
+
+Start the node with:
+
+    erl -proto_dist noisegate -noisegate_optfile /etc/noisegate/noisegate.cfg
+        -name alice@alice.example.com
+
+A missing or unreadable file, or a malformed term, fails distribution
+startup; `%` starts a comment.
+
+### Values from the environment
+
+Any value in the file can be pulled from the OS environment with
+`{env, "VARIABLE"}`. An unset or empty variable removes the setting, so the
+default applies; inside a list, `{env, "VARIABLE"}` items expand in place
+and missing ones are dropped:
+
+    {dir, {env, "NOISEGATE_DIR"}}.
+    {key_file, {env, "NOISEGATE_KEY_FILE"}}.
+    {authorized_keys, [{env, "NOISEGATE_AUTHORIZED_KEYS"}]}.
+
+### Static authorized keys
+
+The cluster's authorized keys can be listed directly in the configuration
+file, which avoids the `authorized.d` directory machinery entirely — useful
+when the peer set is fixed, as in Kubernetes or Docker deployments. Each
+entry is `{Name, Base64Key}` (a raw 32-byte key is also accepted);
+authorized lines `"name base64key [comment]"` work too:
+
+    {authorized_keys, [
+        {"alice@alice.example.com", "pWEtzDwNCbr6YlNjYNPIh931+jJTcN7GY5RZI0danWA="},
+        {"bob@bob.example.com",     "gNpF3uHlBFLX8TKhZYmJBfMotlbNUfXTbcifHD7stVc="},
+        {"carol@carol.example.com", "SJ8sst+8jB7Ttw3qL1MT7woLCb17Xba6ZQ2s8Oh+2VU="}
+    ]}.
+
+The entries are checked on every handshake, exactly like `authorized.d`
+files: a peer whose announced name and key do not match an entry is
+rejected. When `authorized_keys` is set, the default `<dir>/authorized.d`
+directory is not used; explicitly configured `authorized_dirs` are still
+honored and their entries are merged with the static ones. Malformed
+entries are skipped with a warning. Since the file is the single source of
+authorization, changes apply to new handshakes only, and revocation means
+editing the file (or the ConfigMap) and restarting or redeploying the node.
+
+For example, a Kubernetes pod can mount the ConfigMap as one file and keep
+the identity key on a persistent volume:
+
+    -noisegate_optfile /etc/noisegate/noisegate.cfg
+
+with the ConfigMap containing everything except the private key:
+
+    {dir, "/var/lib/noisegate"}.
+    {authorized_keys, [
+        {"alice@alice.default.svc.cluster.local", "pWEtzDwNCbr6YlNjYNPIh931+jJTcN7GY5RZI0danWA="},
+        {"bob@bob.default.svc.cluster.local",     "gNpF3uHlBFLX8TKhZYmJBfMotlbNUfXTbcifHD7stVc="}
+    ]}.
+
+The identity key file name can also be configured with `key_file`
+(default `id_x25519`); only the base name is used, so the key stays inside
+the key directory.
 
 ## Managing guests with noisegate_guests
 

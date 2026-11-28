@@ -56,7 +56,8 @@ connection_settings() ->
                      accept_suites, own_name, node_name, limit_handle],
     case setting_values(lists:usort(BaseKeys ++ HandshakeKeys)) of
         {ok, Values} ->
-            case optional_setting_values([dir, generate, authorized_dirs]) of
+            case optional_setting_values([dir, generate, authorized_dirs,
+                                          authorized_keys]) of
                 {ok, KeyOptions} ->
                     HsOpts = maps:merge(maps:with(HandshakeKeys, Values),
                                         KeyOptions),
@@ -128,7 +129,8 @@ code_change(_OldVersion, State, _Extra) ->
     {ok, State}.
 
 load_node(NodeName, State) ->
-    case optional_setting_values([dir, generate, authorized_dirs]) of
+    case optional_setting_values([dir, key_file, generate, authorized_dirs,
+                                  authorized_keys]) of
         {ok, Options} ->
             load_node_key(NodeName, Options#{node_name => NodeName}, State);
         {error, _} = Error ->

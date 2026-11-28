@@ -36,14 +36,22 @@
 
 -define(KEY_FILE, "id_x25519").
 -define(AUTHORIZED_SUBDIR, "authorized.d").
+-define(STATIC_FILE, "(authorized_keys)").
 -define(MAX_PUB_FILE, 4096).
 -define(MAX_KEY_FILE, 1024).
 -define(MAX_NAME, 255).
 
 -type node_name() :: atom() | binary() | string().
+%% An authorized key entry: `{Name, Key}` with a base64 (or raw 32-byte) key,
+%% or an authorized line "name base64key [comment]" as a string or binary.
+%% Comments belong in the config file as `%` lines, not in the tuples.
+-type authorized_key() :: {node_name(), string() | binary()} |
+                          string() | binary().
 -type opts() :: #{dir             => file:filename(),
+                  key_file        => file:filename() | string() | binary() | atom(),
                   generate        => boolean(),
                   authorized_dirs => [file:filename()] | string(),
+                  authorized_keys => [authorized_key()] | authorized_key(),
                   keygen          => fun(() -> {binary(), binary()}),
                   node_name       => node_name(),
                   comment         => binary() | string()}.
@@ -52,7 +60,8 @@
                         fingerprint := string(),
                         comment     := binary(),
                         file        := file:filename(),
-                        dir         := file:filename()}.
+                        dir         := file:filename(),
+                        static      => boolean()}.
 -type skipped() :: #{file   := file:filename(),
                      reason := term()}.
 %% The secret is only reachable through secret/1, so that printing or logging
@@ -92,7 +101,9 @@ node_key_dir(NodeName, Opts) ->
     end.
 
 %% Authorized directories: the `authorized_dirs` setting (a list, or a
-%% colon-separated string), defaulting to `<keydir>/authorized.d`.
+%% colon-separated string), defaulting to `<keydir>/authorized.d`. When
+%% `authorized_keys` is set and no directories are configured, the static keys
+%% from the config replace the default directory.
 -spec authorized_dirs(node_name(), opts()) -> [file:filename()].
 authorized_dirs(NodeName, Opts) ->
     case setting(authorized_dirs, Opts) of
@@ -103,11 +114,36 @@ authorized_dirs(NodeName, Opts) ->
         {ok, Bin} when is_binary(Bin) ->
             split_dirs(binary_to_list(Bin));
         _ ->
-            [filename:join(node_key_dir(NodeName, Opts), ?AUTHORIZED_SUBDIR)]
+            case setting(authorized_keys, Opts) of
+                {ok, _} ->
+                    [];
+                error ->
+                    [filename:join(node_key_dir(NodeName, Opts), ?AUTHORIZED_SUBDIR)]
+            end
     end.
 
 split_dirs(Str) ->
     [D || D <- string:split(Str, ":", all), D =/= ""].
+
+%% The name of the identity key file inside the key directory: the `key_file`
+%% setting, defaulting to `id_x25519`. Only the base name is used, so the key
+%% stays inside the key directory.
+-spec key_file_name(opts()) -> file:filename().
+key_file_name(Opts) ->
+    case setting(key_file, Opts) of
+        {ok, B} when is_binary(B) ->
+            filename:basename(binary_to_list(B));
+        {ok, L} when is_list(L) ->
+            filename:basename(L);
+        {ok, A} when is_atom(A) ->
+            filename:basename(atom_to_list(A));
+        {ok, Other} ->
+            logger:warning("noisegate_keys: invalid value for key_file: ~0p, using ~ts",
+                           [Other, ?KEY_FILE]),
+            ?KEY_FILE;
+        error ->
+            ?KEY_FILE
+    end.
 
 generate_enabled(Opts) ->
     case setting(generate, Opts) of
@@ -213,7 +249,7 @@ load_or_generate(NodeName, Opts) ->
 
 load_or_generate_1(Name, Opts) ->
     Dir = node_key_dir(Name, Opts),
-    Path = filename:join(Dir, ?KEY_FILE),
+    Path = filename:join(Dir, key_file_name(Opts)),
     case read_key(Path) of
         {ok, Secret} ->
             {ok, key_info(Secret, false)};
@@ -415,14 +451,15 @@ valid_chars(_) ->
 %%
 
 %% Checks a peer announced during a handshake. Touches no files when `Name` is
-%% not a valid node name. Reads the authorized directories fresh on every call.
+%% not a valid node name. Reads the authorized directories and the static
+%% `authorized_keys` entries fresh on every call.
 -spec check_peer(binary(), binary(), opts()) -> allowed | denied | unknown_name.
 check_peer(Name, PublicKey, Opts) ->
     case valid_node_name(Name) of
         false ->
             unknown_name;
         true ->
-            Entries = load_all(dirs_for(Opts)),
+            Entries = static_entries(Opts) ++ load_all(dirs_for(Opts)),
             case [K || #{name := N, key := K} <- Entries, N =:= Name] of
                 [] ->
                     unknown_name;
@@ -520,13 +557,14 @@ remove_peer(Name, Fingerprint, Opts) ->
         {_, [Error | _]} -> Error
     end.
 
-%% Lists the entries of all authorized directories, with the same loader rules as
-%% `check_peer/3`. Returns the entries and the files that were skipped (with the
-%% reason). A directory that is refused (not a directory, writable by
-%% group/other, unreadable) is an error; a missing directory is empty.
+%% Lists the entries of the static `authorized_keys` setting and of all
+%% authorized directories, with the same loader rules as `check_peer/3`.
+%% Returns the entries and the files that were skipped (with the reason). A
+%% directory that is refused (not a directory, writable by group/other,
+%% unreadable) is an error; a missing directory is empty.
 -spec list_peers(opts()) -> {ok, [peer_entry()], [skipped()]} | {error, term()}.
 list_peers(Opts) ->
-    list_peers_1(dirs_for(Opts), [], []).
+    list_peers_1(dirs_for(Opts), [static_entries(Opts)], []).
 
 list_peers_1([], Entries, Skips) ->
     {ok, lists:append(lists:reverse(Entries)), lists:append(lists:reverse(Skips))};
@@ -561,6 +599,86 @@ ensure_dirs_1([{Dir, Mode} | Rest]) ->
         ok -> ensure_dirs_1(Rest);
         {error, Reason} -> {error, {mkdir_failed, Reason, Dir}}
     end.
+
+%%
+%% Static authorized keys
+%%
+
+%% The peer entries of the `authorized_keys` setting: `{Name, Key}` tuples,
+%% authorized lines, or one multi-line string. Parsed like `.pub` files;
+%% malformed entries are skipped with a warning.
+static_entries(Opts) ->
+    case setting(authorized_keys, Opts) of
+        {ok, Value} ->
+            static_entries_1(Value);
+        error ->
+            []
+    end.
+
+static_entries_1(Value) when is_list(Value), Value =/= [], is_integer(hd(Value)) ->
+    static_entries_2([Value]);
+static_entries_1(Value) when is_list(Value) ->
+    static_entries_2(Value);
+static_entries_1(Value) ->
+    static_entries_2([Value]).
+
+static_entries_2(Items) ->
+    Lines = lists:append([static_item(Item) ||
+                             Item <- Items, Item =/= "", Item =/= <<>>]),
+    lists:append([static_entry(Line) || Line <- Lines]).
+
+static_item({Name, Key}) ->
+    case {name_to_binary(Name), key_to_b64(Key)} of
+        {{ok, NameBin}, {ok, KeyBin}} ->
+            [<<NameBin/binary, " ", KeyBin/binary>>];
+        _ ->
+            warn(?STATIC_FILE,
+                 io_lib:format("invalid authorized_keys entry: ~0tp", [{Name, Key}])),
+            []
+    end;
+static_item(Line) when is_binary(Line) ->
+    split_lines(Line);
+static_item(Line) when is_list(Line), Line =/= [], is_integer(hd(Line)) ->
+    case name_to_binary(Line) of
+        {ok, Bin} ->
+            split_lines(Bin);
+        error ->
+            warn(?STATIC_FILE,
+                 io_lib:format("invalid authorized_keys entry: ~0tp", [Line])),
+            []
+    end;
+static_item(Other) ->
+    warn(?STATIC_FILE,
+         io_lib:format("invalid authorized_keys entry: ~0tp", [Other])),
+    [].
+
+split_lines(Bin) ->
+    [Line || Line <- binary:split(Bin, <<"\n">>, [global]), not blank(Line)].
+
+static_entry(Line) ->
+    case parse_entry(Line) of
+        {ok, Name, Key, Comment} ->
+            [#{name => Name, key => Key,
+               fingerprint => binary_to_list(fingerprint(Key)),
+               comment => Comment, file => ?STATIC_FILE, dir => ?STATIC_FILE,
+               static => true}];
+        {error, Why} ->
+            warn(?STATIC_FILE,
+                 io_lib:format("malformed authorized_keys entry: ~p", [Why])),
+            []
+    end.
+
+%% The key of an authorized_keys tuple: base64 text of any of the accepted
+%% text encodings, or a raw 32-byte key.
+key_to_b64(Raw) when is_binary(Raw), byte_size(Raw) =:= 32 ->
+    {ok, base64:encode(Raw)};
+key_to_b64(B64) when is_binary(B64); is_list(B64) ->
+    case name_to_binary(B64) of
+        {ok, Bin} -> {ok, Bin};
+        error -> error
+    end;
+key_to_b64(_) ->
+    error.
 
 %%
 %% Loader

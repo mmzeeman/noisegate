@@ -1,7 +1,7 @@
 %% Settings parsing for the distribution carrier.
 -module(noisegate_settings).
 
--export([parse/0, parse/1, parse/3]).
+-export([parse/0, parse/1, parse/3, parse/4, read_optfile/1]).
 
 -spec parse() -> {ok, map()} | {error, term()}.
 parse() ->
@@ -9,17 +9,34 @@ parse() ->
 
 -spec parse(map()) -> {ok, map()} | {error, term()}.
 parse(Opts) when is_map(Opts) ->
-    parse(Opts, argument_settings(), environment_settings());
+    Flags = argument_settings(),
+    Env = environment_settings(),
+    case optfile_settings(Opts, Flags, Env) of
+        {ok, File} ->
+            parse(Opts, Flags, Env, File);
+        {error, _} = Error ->
+            Error
+    end;
 parse(_) ->
     {error, bad_options}.
 
 -spec parse(map(), map(), map()) -> {ok, map()} | {error, term()}.
 parse(Opts, Flags, Env)
   when is_map(Opts), is_map(Flags), is_map(Env) ->
-    Layers = [policy_layer(Opts), policy_layer(Flags), policy_layer(Env)],
+    parse(Opts, Flags, Env, #{});
+parse(_, _, _) ->
+    {error, bad_options}.
+
+%% The fourth layer holds the settings of a `-noisegate_optfile` config file
+%% (string keys), with the lowest precedence above the defaults.
+-spec parse(map(), map(), map(), map()) -> {ok, map()} | {error, term()}.
+parse(Opts, Flags, Env, File)
+  when is_map(Opts), is_map(Flags), is_map(Env), is_map(File) ->
+    Layers = [policy_layer(Opts), policy_layer(Flags), policy_layer(Env),
+              policy_layer(File)],
     case {noisegate_protocol:sender_policy(Layers),
           noisegate_protocol:receiver_policy(Layers),
-          carrier_values(Opts, Flags, Env)}
+          carrier_values(Opts, Flags, Env, File)}
     of
         {{ok, SenderPolicy}, {ok, ReceiverPolicy}, {ok, Carrier}} ->
             {ok, Carrier#{sender_policy => SenderPolicy,
@@ -28,28 +45,28 @@ parse(Opts, Flags, Env)
         {_, {error, Reason}, _} -> {error, Reason};
         {_, _, {error, _} = Error} -> Error
     end;
-parse(_, _, _) ->
+parse(_, _, _, _) ->
     {error, bad_options}.
 
-carrier_values(Opts, Flags, Env) ->
+carrier_values(Opts, Flags, Env, File) ->
     Values = [{handshake_timeout_ms,
-               effective("handshake_timeout_ms", Opts, Flags, Env, "5000"),
+               effective("handshake_timeout_ms", Opts, Flags, Env, File, "5000"),
                5000, "a positive integer"},
               {send_timeout_ms,
-               effective("send_timeout_ms", Opts, Flags, Env, "30000"),
+               effective("send_timeout_ms", Opts, Flags, Env, File, "30000"),
                30000, "a positive integer"},
               {max_pending,
-               effective("max_pending", Opts, Flags, Env, "64"),
+               effective("max_pending", Opts, Flags, Env, File, "64"),
                64, "a positive integer"}],
     case parse_positive_values(Values, #{}) of
         {ok, Parsed} ->
-            case parse_suite(effective("suite", Opts, Flags, Env,
+            case parse_suite(effective("suite", Opts, Flags, Env, File,
                                        "aesgcm_sha512")) of
                 {ok, Suite} ->
                     case parse_suites(effective("accept_suites", Opts, Flags,
-                                                Env, "aesgcm_sha512")) of
+                                                Env, File, "aesgcm_sha512")) of
                         {ok, AcceptSuites} ->
-                            KeyOptions = key_option_settings(Opts, Flags, Env),
+                            KeyOptions = key_option_settings(Opts, Flags, Env, File),
                             HsOpts = Parsed#{suite => Suite,
                                              accept_suites => AcceptSuites},
                             {ok, #{suite => Suite,
@@ -87,7 +104,8 @@ add_argument_pairs(_, Acc) ->
     Acc.
 
 environment_settings() ->
-    Keys = ["dir", "generate", "authorized_dirs", "chunk_size", "padding",
+    Keys = ["dir", "key_file", "generate", "authorized_dirs", "authorized_keys",
+            "optfile", "chunk_size", "padding",
             "compression", "rekey_after", "max_packet", "accept_compression",
             "max_bytes_without_rekey", "handshake_timeout_ms", "suite",
             "accept_suites", "max_pending", "send_timeout_ms"],
@@ -99,14 +117,16 @@ environment_settings() ->
                         end
                 end, #{}, Keys).
 
-key_option_settings(Opts, Flags, Env) ->
+key_option_settings(Opts, Flags, Env, File) ->
     lists:foldl(fun({StringKey, AtomKey}, Acc) ->
-                        case effective(StringKey, Opts, Flags, Env, undefined) of
+                        case effective(StringKey, Opts, Flags, Env, File, undefined) of
                             undefined -> Acc;
                             Value -> maps:put(AtomKey, Value, Acc)
                         end
-                end, #{}, [{"dir", dir}, {"generate", generate},
-                           {"authorized_dirs", authorized_dirs}]).
+                end, #{}, [{"dir", dir}, {"key_file", key_file},
+                           {"generate", generate},
+                           {"authorized_dirs", authorized_dirs},
+                           {"authorized_keys", authorized_keys}]).
 
 effective(Key, Opts, Flags, Env, Default) ->
     case maps:find(option_atom(Key), Opts) of
@@ -126,9 +146,23 @@ effective(Key, Opts, Flags, Env, Default) ->
             end
     end.
 
+effective(Key, Opts, Flags, Env, File, Default) ->
+    case effective(Key, Opts, Flags, Env, undefined) of
+        undefined ->
+            case maps:find(Key, File) of
+                {ok, Value} -> Value;
+                error -> Default
+            end;
+        Value ->
+            Value
+    end.
+
 option_atom("dir") -> dir;
 option_atom("generate") -> generate;
 option_atom("authorized_dirs") -> authorized_dirs;
+option_atom("authorized_keys") -> authorized_keys;
+option_atom("key_file") -> key_file;
+option_atom("optfile") -> optfile;
 option_atom("chunk_size") -> chunk_size;
 option_atom("padding") -> padding;
 option_atom("compression") -> compression;
@@ -238,3 +272,115 @@ to_list(Value) when is_binary(Value) ->
     unicode:characters_to_list(Value);
 to_list(Value) when is_list(Value) ->
     Value.
+
+%%
+%% Config file (-noisegate_optfile)
+%%
+
+%% Locates the config file: the `optfile` option, a `-noisegate optfile Path`
+%% flag, a `-noisegate_optfile Path` flag, or `NOISEGATE_OPTFILE`, in that
+%% order.
+optfile_settings(Opts, Flags, Env) ->
+    case optfile_path(Opts, Flags, Env) of
+        undefined ->
+            {ok, #{}};
+        Path ->
+            read_optfile(Path)
+    end.
+
+optfile_path(Opts, Flags, Env) ->
+    case effective("optfile", Opts, Flags, Env, undefined) of
+        undefined ->
+            init_optfile_path(Env);
+        Path ->
+            Path
+    end.
+
+init_optfile_path(Env) ->
+    case init:get_argument(noisegate_optfile) of
+        {ok, Groups} ->
+            case [P || G <- Groups, P <- G] of
+                [] -> env_optfile(Env);
+                [Path | _] -> Path
+            end;
+        error ->
+            env_optfile(Env)
+    end.
+
+env_optfile(Env) ->
+    case maps:find("optfile", Env) of
+        {ok, Path} -> Path;
+        error -> undefined
+    end.
+
+%% Reads a config file in the spirit of `-ssl_dist_optfile`: Erlang term
+%% syntax, one `{Key, Value}` tuple per setting, for example `{suite,
+%% aesgcm_blake2b}.` or `{authorized_keys, [{"a@h", "base64key"}]}.`. Values
+%% accept the native terms and the string forms used by flags and env.
+-spec read_optfile(file:filename()) -> {ok, map()} | {error, term()}.
+read_optfile(Path) ->
+    case file:consult(Path) of
+        {ok, Terms} ->
+            file_settings(Terms, Path, #{});
+        {error, Reason} ->
+            {error, {bad_optfile, Path, Reason}}
+    end.
+
+file_settings([], _Path, Acc) ->
+    {ok, Acc};
+file_settings([{Key, Value} | Rest], Path, Acc) ->
+    case file_key(Key) of
+        {ok, StringKey} ->
+            case expand_env(Value) of
+                {ok, Expanded} ->
+                    file_settings(Rest, Path, Acc#{StringKey => Expanded});
+                missing ->
+                    file_settings(Rest, Path, Acc);
+                {error, Why} ->
+                    {error, {bad_optfile, Path, Why}}
+            end;
+        error ->
+            {error, {bad_optfile, Path, {invalid_key, Key}}}
+    end;
+file_settings([Term | _], Path, _Acc) ->
+    {error, {bad_optfile, Path, {invalid_term, Term}}}.
+
+file_key(Key) when is_atom(Key) ->
+    {ok, atom_to_list(Key)};
+file_key(Key) when is_binary(Key) ->
+    {ok, binary_to_list(Key)};
+file_key(Key) when is_list(Key) ->
+    {ok, Key};
+file_key(_) ->
+    error.
+
+%% Values of the form `{env, "VAR"}` are read from the OS environment. An
+%% unset or empty variable removes the setting (the default applies); inside
+%% lists, `{env, "VAR"}` items expand in place and missing ones are dropped.
+expand_env({env, Var}) ->
+    env_value(Var);
+expand_env(Value) when is_list(Value), Value =/= [], not is_integer(hd(Value)) ->
+    expand_env_items(Value, []);
+expand_env(Value) ->
+    {ok, Value}.
+
+expand_env_items([], Acc) ->
+    {ok, lists:reverse(Acc)};
+expand_env_items([Item | Rest], Acc) ->
+    case expand_env(Item) of
+        {ok, Expanded} ->
+            expand_env_items(Rest, [Expanded | Acc]);
+        missing ->
+            expand_env_items(Rest, Acc);
+        {error, _} = Error ->
+            Error
+    end.
+
+env_value(Var) when is_list(Var), Var =/= [], is_integer(hd(Var)) ->
+    case os:getenv(Var) of
+        false -> missing;
+        "" -> missing;
+        Value -> {ok, Value}
+    end;
+env_value(Var) ->
+    {error, {invalid_env, Var}}.
